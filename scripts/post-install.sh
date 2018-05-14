@@ -30,6 +30,12 @@ chmod a+rX $BIN_DIR/kapacitor*
 
 test -f /etc/default/kapacitor || touch /etc/default/kapacitor
 
+# create user
+if ! id kapacitor >/dev/null 2>&1; then
+    useradd --system -U -M kapacitor -s /bin/false -d $DATA_DIR
+fi
+
+
 # Distribution-specific logic
 if [[ -f /etc/redhat-release ]]; then
     # RHEL-variant logic
