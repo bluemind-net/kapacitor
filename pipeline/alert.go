@@ -55,6 +55,9 @@ type AlertNode struct{ *AlertNodeData }
 //    * Talk -- Post alert message to Talk client.
 //    * Telegram -- Post alert message to Telegram client.
 //    * MQTT -- Post alert message to MQTT.
+//    * Teams -- Post alert message to Microsoft Teams.
+//    * Discord -- Post alert message to Discord webhook.
+//    * ServiceNow -- Post alert message to ServiceNow.
 //
 // See below for more details on configuring each handler.
 //
@@ -350,6 +353,10 @@ type AlertNodeData struct {
 	// tick:ignore
 	SlackHandlers []*SlackHandler `tick:"Slack" json:"slack"`
 
+	// Send alert to Discord.
+	// tick:ignore
+	DiscordHandlers []*DiscordHandler `tick:"Discord" json:"discord"`
+
 	// Send alert to Telegram.
 	// tick:ignore
 	TelegramHandlers []*TelegramHandler `tick:"Telegram" json:"telegram"`
@@ -385,6 +392,14 @@ type AlertNodeData struct {
 	// Send alert to Kafka topic
 	// tick:ignore
 	KafkaHandlers []*KafkaHandler `tick:"Kafka" json:"kafka"`
+
+	// Send alert to Microsoft Teams channel.
+	// tick:ignore
+	TeamsHandlers []*TeamsHandler `tick:"Teams" json:"teams"`
+
+	// Send alert to ServiceNow.
+	// tick:ignore
+	ServiceNowHandlers []*ServiceNowHandler `tick:"ServiceNow" json:"serviceNow"`
 }
 
 func newAlertNode(wants EdgeType) *AlertNode {
@@ -1373,18 +1388,20 @@ func (s *SensuHandler) Metadata(key string, value interface{}) *SensuHandler {
 //    [pushover]
 //      enabled = true
 //      token = "9hiWoDOZ9IbmHsOTeST123ABciWTIqXQVFDo63h9"
-//      user_key = "Pushover"
+//      user-key = "Pushover"
 //
 // Example:
 //    stream
 //         |alert()
 //             .pushover()
 //              .sound('siren')
-//              .user_key('other user')
+//              .userKey('other user key or delivery group key')
 //              .device('mydev')
 //              .title('mytitle')
 //              .URL('myurl')
 //              .URLTitle('mytitle')
+//
+// If the userKey() is omitted from above, the default userKey is used from the global pushover configuration
 //
 // Send alerts to Pushover.
 //
@@ -1521,6 +1538,81 @@ type SlackHandler struct {
 	// IconEmoji is an emoji name surrounded in ':' characters.
 	// The emoji image will replace the normal user icon for the slack bot.
 	IconEmoji string `json:"iconEmoji"`
+}
+
+// Send the alert to Discord.
+// To allow Kapacitor to post to Discord,
+// follow this guide https://support.discordapp.com/hc/en-us/articles/228383668
+// and create a new webhook and place the generated URL
+// in the 'discord' configuration section.
+//
+// Example:
+//    [[discord]]
+//      enabled = true
+//      url = "https://discordapp.com/api/webhooks/xxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+//
+// In order to not post a message every alert interval
+// use AlertNode.StateChangesOnly so that only events
+// where the alert changed state are posted to the channel.
+//
+// Example:
+//    stream
+//         |alert()
+//             .discord()
+//
+// Send alerts to the default workspace
+//
+// Example:
+// stream
+//      |alert()
+//          .discord()
+//          .workspace('opencommunity')
+//
+// send alerts to the opencommunity workspace
+//
+// If the 'discord' section in the configuration has the option: global = true
+// then all alerts are sent to Discord without the need to explicitly state it
+// in the TICKscript.
+//
+// Example:
+//    [[discord]]
+//      enabled = true
+//      default = true
+//      workspace = examplecorp
+//      url = "https://discordapp.com/api/webhooks/xxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+//      global = true
+//      state-changes-only = true
+//
+// Example:
+//    stream
+//         |alert()
+//
+// Send alert to Discord.
+// tick:property
+func (n *AlertNodeData) Discord() *DiscordHandler {
+	discord := &DiscordHandler{
+		AlertNodeData: n,
+	}
+	n.DiscordHandlers = append(n.DiscordHandlers, discord)
+	return discord
+}
+
+// tick:embedded:AlertNode.Discord
+type DiscordHandler struct {
+	*AlertNodeData `json:"-"`
+
+	// Discord workspace ID to use when posting to webhook
+	// If empty uses the default config
+	Workspace string `json:"workspace"`
+	// Username of webhook
+	// If empty uses the default config
+	Username string `json:"username"`
+	// URL of webhook's avatar
+	// If empty uses the default config
+	AvatarURL string `json:"avatarUrl"`
+	// Embed title
+	// If empty uses the default config
+	EmbedTitle string `json:"embedTitle"`
 }
 
 // Send the alert to Telegram.
@@ -1761,6 +1853,10 @@ type OpsGenie2Handler struct {
 	// OpsGenie2 Recipients.
 	// tick:ignore
 	RecipientsList []string `tick:"Recipients" json:"recipients"`
+
+	// OpsGenie2 recovery_action
+	// tick:ignore
+	RecoveryActionString string `tick:"RecoveryAction" json:"recovery_action"`
 }
 
 // The list of teams to be alerted. If empty defaults to the teams from the configuration.
@@ -1774,6 +1870,13 @@ func (og *OpsGenie2Handler) Teams(teams ...string) *OpsGenie2Handler {
 // tick:property
 func (og *OpsGenie2Handler) Recipients(recipients ...string) *OpsGenie2Handler {
 	og.RecipientsList = recipients
+	return og
+}
+
+// The action to perform when the alarm recovers. If empty defaults to the recovery_action from the configuration.
+// tick:property
+func (og *OpsGenie2Handler) RecoveryAction(recoveryAction string) *OpsGenie2Handler {
+	og.RecoveryActionString = recoveryAction
 	return og
 }
 
@@ -1957,4 +2060,144 @@ type KafkaHandler struct {
 	// Template used to construct the message body
 	// If empty the alert data in JSON is sent as the message body.
 	Template string `json:"template"`
+}
+
+// Send the alert to a Microsoft Teams channel.
+// To allow Kapacitor to post to Teams, to to the URL
+// https://docs.microsoft.com/en-us/microsoftteams/platform/concepts/connectors#setting-up-a-custom-incoming-webhook
+// and follow instructions to create a webhook for a Teams channel.  Add the webhook URL to the configuration.
+//
+// Example:
+//    [teams]
+//      enabled = true
+//      channel-url = "https://outlook.office.com/webhook/..."
+//
+// In order to not post a message every alert interval
+// use AlertNode.StateChangesOnly so that only events
+// where the alert changed state are posted to the room.
+//
+// Example:
+//    stream
+//         |alert()
+//             .teams()
+//
+// Send alerts to Teams channel in the configuration file.
+//
+// Example:
+//    stream
+//         |alert()
+//             .teams()
+//             .channelURL('https://outlook.office.com/webhook/...')
+//
+// Send alerts to Teams channel with webhook (overrides configuration file).
+//
+// If the 'teams' section in the configuration has the option: global = true
+// then all alerts are sent to Teams without the need to explicitly state it
+// in the TICKscript.
+//
+// Example:
+//    [teams]
+//      enabled = true
+//      channel-url = "https://outlook.office.com/webhook/..."
+//      global = true
+//      state-changes-only = true
+//
+// Example:
+//    stream
+//         |alert()
+//
+// Send alert to Teams using default channel.
+// tick:property
+func (n *AlertNodeData) Teams() *TeamsHandler {
+	teams := &TeamsHandler{
+		AlertNodeData: n,
+	}
+	n.TeamsHandlers = append(n.TeamsHandlers, teams)
+	return teams
+}
+
+// tick:embedded:AlertNode.Teams
+type TeamsHandler struct {
+	*AlertNodeData `json:"-"`
+
+	// Teams channel webhook URL to post messages.
+	// If empty uses the URL from the configuration.
+	ChannelURL string `json:"channel_url"`
+}
+
+// Send the alert to ServiceNow.
+//
+// Example:
+//    [serviceNow]
+//      enabled = true
+//      url = "https://instance.service-now.com/api/now/v1/table/em_alert"
+//
+// In order to not post a message every alert interval
+// use AlertNode.StateChangesOnly so that only events
+// where the alert changed state are posted to the room.
+//
+// Example:
+//    stream
+//         |alert()
+//             .serviceNow()
+//
+// If the 'serviceNow' section in the configuration has the option: global = true
+// then all alerts are sent to ServiceNow without the need to explicitly state it
+// in the TICKscript.
+//
+// Example:
+//    [serviceNow]
+//      enabled = true
+//      url = "https://instance.service-now.com/api/now/v1/table/em_alert"
+//      global = true
+//      state-changes-only = true
+//
+// Example:
+//    stream
+//         |alert()
+//
+// Send alert to ServiceNow using default url.
+// tick:property
+func (n *AlertNodeData) ServiceNow() *ServiceNowHandler {
+	serviceNow := &ServiceNowHandler{
+		AlertNodeData: n,
+	}
+	n.ServiceNowHandlers = append(n.ServiceNowHandlers, serviceNow)
+	return serviceNow
+}
+
+// tick:embedded:AlertNode.ServiceNow
+type ServiceNowHandler struct {
+	*AlertNodeData `json:"-"`
+
+	// ServiceNow API URL to post alerts.
+	// If empty uses the URL from the configuration.
+	URL string `json:"url"`
+
+	// Username for BASIC authentication.
+	// If empty uses username from the configuration.
+	Username string `json:"username"`
+
+	// Password for BASIC authentication.
+	// If empty uses password from the configuration.
+	Password string `json:"password"`
+
+	// Event source identification (event monitoring software).
+	// If empty uses the URL from the configuration.
+	Source string `json:"source"`
+
+	// Node name.
+	Node string `json:"node"`
+
+	// Metric type.
+	Type string `json:"type"`
+
+	// Node resource relevant to the event.
+	Resource string `json:"resource"`
+
+	// Metric name for which event has been created..
+	MetricName string `json:"metric_name"`
+
+	// Message key.
+	MessageKey string `json:"messageKey"`
 }

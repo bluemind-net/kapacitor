@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/influxdata/kapacitor/services/discord/discordtest"
+
 	"github.com/davecgh/go-spew/spew"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/go-cmp/cmp"
@@ -54,12 +56,16 @@ import (
 	"github.com/influxdata/kapacitor/services/pagerduty2/pagerduty2test"
 	"github.com/influxdata/kapacitor/services/pushover/pushovertest"
 	"github.com/influxdata/kapacitor/services/sensu/sensutest"
+	"github.com/influxdata/kapacitor/services/servicenow"
+	"github.com/influxdata/kapacitor/services/servicenow/servicenowtest"
 	"github.com/influxdata/kapacitor/services/slack"
 	"github.com/influxdata/kapacitor/services/slack/slacktest"
 	"github.com/influxdata/kapacitor/services/smtp/smtptest"
 	"github.com/influxdata/kapacitor/services/snmptrap/snmptraptest"
 	"github.com/influxdata/kapacitor/services/swarm"
 	"github.com/influxdata/kapacitor/services/talk/talktest"
+	"github.com/influxdata/kapacitor/services/teams"
+	"github.com/influxdata/kapacitor/services/teams/teamstest"
 	"github.com/influxdata/kapacitor/services/telegram"
 	"github.com/influxdata/kapacitor/services/telegram/telegramtest"
 	"github.com/influxdata/kapacitor/services/udf"
@@ -5320,6 +5326,21 @@ func TestServer_UDFStreamAgents(t *testing.T) {
 				},
 			},
 		},
+		// Python 2
+		{
+			buildFunc: func() error { return nil },
+			config: udf.FunctionConfig{
+				Prog:    Python2Executable,
+				Args:    []string{"-u", filepath.Join(udfDir, "agent/examples/moving_avg/moving_avg.py")},
+				Timeout: toml.Duration(time.Minute),
+				Env: map[string]string{
+					"PYTHONPATH": strings.Join(
+						[]string{filepath.Join(udfDir, "agent/py"), os.Getenv("PYTHONPATH")},
+						string(filepath.ListSeparator),
+					),
+				},
+			},
+		},
 	}
 	for _, agent := range agents {
 		err := agent.buildFunc()
@@ -5497,6 +5518,33 @@ func TestServer_UDFStreamAgentsSocket(t *testing.T) {
 				Timeout: toml.Duration(time.Minute),
 			},
 		},
+		// Python 2
+		{
+			startFunc: func() *exec.Cmd {
+				cmd := exec.Command(
+					Python2Executable,
+					"-u",
+					filepath.Join(udfDir, "agent/examples/mirror/mirror.py"),
+					filepath.Join(tdir, "mirror.py.sock"),
+				)
+				cmd.Stderr = os.Stderr
+				env := os.Environ()
+				env = append(env, fmt.Sprintf(
+					"%s=%s",
+					"PYTHONPATH",
+					strings.Join(
+						[]string{filepath.Join(udfDir, "agent/py"), os.Getenv("PYTHONPATH")},
+						string(filepath.ListSeparator),
+					),
+				))
+				cmd.Env = env
+				return cmd
+			},
+			config: udf.FunctionConfig{
+				Socket:  filepath.Join(tdir, "mirror.py.sock"),
+				Timeout: toml.Duration(time.Minute),
+			},
+		},
 	}
 	for _, agent := range agents {
 		cmd := agent.startFunc()
@@ -5635,6 +5683,21 @@ func TestServer_UDFBatchAgents(t *testing.T) {
 			buildFunc: func() error { return nil },
 			config: udf.FunctionConfig{
 				Prog:    PythonExecutable,
+				Args:    []string{"-u", filepath.Join(udfDir, "agent/examples/outliers/outliers.py")},
+				Timeout: toml.Duration(time.Minute),
+				Env: map[string]string{
+					"PYTHONPATH": strings.Join(
+						[]string{filepath.Join(udfDir, "agent/py"), os.Getenv("PYTHONPATH")},
+						string(filepath.ListSeparator),
+					),
+				},
+			},
+		},
+		// Python 2
+		{
+			buildFunc: func() error { return nil },
+			config: udf.FunctionConfig{
+				Prog:    Python2Executable,
 				Args:    []string{"-u", filepath.Join(udfDir, "agent/examples/outliers/outliers.py")},
 				Timeout: toml.Duration(time.Minute),
 				Env: map[string]string{
@@ -6753,8 +6816,8 @@ func TestServer_UpdateConfig(t *testing.T) {
 			element: "test",
 			setDefaults: func(c *server.Config) {
 				apc := httppost.Config{
-					Endpoint: "test",
-					URL:      "http://httppost.example.com",
+					Endpoint:    "test",
+					URLTemplate: "http://httppost.example.com",
 					Headers: map[string]string{
 						"testing": "works",
 					},
@@ -7672,6 +7735,93 @@ func TestServer_UpdateConfig(t *testing.T) {
 			},
 		},
 		{
+			section: "servicenow",
+			setDefaults: func(c *server.Config) {
+				c.ServiceNow.URL = "https://instance.service-now.com/api/now/v1/table/em_alert"
+				c.ServiceNow.Source = "Kapacitor"
+				c.ServiceNow.Username = ""
+				c.ServiceNow.Password = ""
+			},
+			expDefaultSection: client.ConfigSection{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow"},
+				Elements: []client.ConfigElement{{
+					Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+					Options: map[string]interface{}{
+						"enabled":            false,
+						"global":             false,
+						"state-changes-only": false,
+						"url":                "https://instance.service-now.com/api/now/v1/table/em_alert",
+						"source":             "Kapacitor",
+						"username":           "",
+						"password":           false,
+					},
+					Redacted: []string{
+						"password",
+					},
+				}},
+			},
+			expDefaultElement: client.ConfigElement{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+				Options: map[string]interface{}{
+					"enabled":            false,
+					"global":             false,
+					"state-changes-only": false,
+					"url":                "https://instance.service-now.com/api/now/v1/table/em_alert",
+					"source":             "Kapacitor",
+					"username":           "",
+					"password":           false,
+				},
+				Redacted: []string{
+					"password",
+				},
+			},
+			updates: []updateAction{
+				{
+					updateAction: client.ConfigUpdateAction{
+						Set: map[string]interface{}{
+							"enabled":  true,
+							"url":      "https://dev12345.service-now.com/api/now/v1/table/em_alert",
+							"username": "dev",
+							"password": "12345",
+						},
+					},
+					expSection: client.ConfigSection{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow"},
+						Elements: []client.ConfigElement{{
+							Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+							Options: map[string]interface{}{
+								"enabled":            true,
+								"global":             false,
+								"state-changes-only": false,
+								"url":                "https://dev12345.service-now.com/api/now/v1/table/em_alert",
+								"source":             "Kapacitor",
+								"username":           "dev",
+								"password":           true,
+							},
+							Redacted: []string{
+								"password",
+							},
+						}},
+					},
+					expElement: client.ConfigElement{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+						Options: map[string]interface{}{
+							"enabled":            true,
+							"global":             false,
+							"state-changes-only": false,
+							"url":                "https://dev12345.service-now.com/api/now/v1/table/em_alert",
+							"source":             "Kapacitor",
+							"username":           "dev",
+							"password":           true,
+						},
+						Redacted: []string{
+							"password",
+						},
+					},
+				},
+			},
+		},
+		{
 			section: "slack",
 			setDefaults: func(c *server.Config) {
 				cfg := &slack.Config{
@@ -8322,6 +8472,65 @@ func TestServer_UpdateConfig(t *testing.T) {
 			},
 		},
 		{
+			section: "teams",
+			setDefaults: func(c *server.Config) {
+				c.Teams.ChannelURL = "http://teams.example.com/abcde"
+			},
+			expDefaultSection: client.ConfigSection{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams"},
+				Elements: []client.ConfigElement{{
+					Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams/"},
+					Options: map[string]interface{}{
+						"enabled":            false,
+						"global":             false,
+						"state-changes-only": false,
+						"channel-url":        "http://teams.example.com/abcde",
+					},
+				}},
+			},
+			expDefaultElement: client.ConfigElement{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams/"},
+				Options: map[string]interface{}{
+					"enabled":            false,
+					"global":             false,
+					"state-changes-only": false,
+					"channel-url":        "http://teams.example.com/abcde",
+				},
+			},
+			updates: []updateAction{
+				{
+					updateAction: client.ConfigUpdateAction{
+						Set: map[string]interface{}{
+							"global":             true,
+							"state-changes-only": true,
+							"channel-url":        "http://teams.example.com/12345",
+						},
+					},
+					expSection: client.ConfigSection{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams"},
+						Elements: []client.ConfigElement{{
+							Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams/"},
+							Options: map[string]interface{}{
+								"enabled":            false,
+								"global":             true,
+								"state-changes-only": true,
+								"channel-url":        "http://teams.example.com/12345",
+							},
+						}},
+					},
+					expElement: client.ConfigElement{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/teams/"},
+						Options: map[string]interface{}{
+							"enabled":            false,
+							"global":             true,
+							"state-changes-only": true,
+							"channel-url":        "http://teams.example.com/12345",
+						},
+					},
+				},
+			},
+		},
+		{
 			section: "telegram",
 			setDefaults: func(c *server.Config) {
 				c.Telegram.ChatId = "kapacitor"
@@ -8649,6 +8858,19 @@ func TestServer_ListServiceTests(t *testing.T) {
 				},
 			},
 			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/discord"},
+				Name: "discord",
+				Options: client.ServiceTestOptions{
+					"workspace":   "",
+					"avatar-url":  "https://influxdata.github.io/branding/img/downloads/influxdata-logo--symbol--pool-alpha.png",
+					"level":       "INFO",
+					"message":     "test discord message",
+					"username":    "Kapacitor",
+					"embed-title": "Kapacitor Alert",
+					"time-val":    "1970-01-01T00:00:01Z",
+				},
+			},
+			{
 				Link: client.Link{Relation: "self", Href: "/kapacitor/v1/service-tests/dns"},
 				Name: "dns",
 				Options: client.ServiceTestOptions{
@@ -8758,11 +8980,12 @@ func TestServer_ListServiceTests(t *testing.T) {
 				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/opsgenie2"},
 				Name: "opsgenie2",
 				Options: client.ServiceTestOptions{
-					"teams":        nil,
-					"recipients":   nil,
-					"message-type": "CRITICAL",
-					"message":      "test opsgenie message",
-					"entity-id":    "testEntityID",
+					"teams":           nil,
+					"recipients":      nil,
+					"message-type":    "CRITICAL",
+					"message":         "test opsgenie message",
+					"entity-id":       "testEntityID",
+					"recovery_action": "notes",
 				},
 			},
 			{
@@ -8848,6 +9071,16 @@ func TestServer_ListServiceTests(t *testing.T) {
 				},
 			},
 			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/servicenow"},
+				Name: "servicenow",
+				Options: client.ServiceTestOptions{
+					"alert_id": "id",
+					"source":   "Kapacitor",
+					"level":    "CRITICAL",
+					"message":  "test servicenow alert",
+				},
+			},
+			{
 				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/slack"},
 				Name: "slack",
 				Options: client.ServiceTestOptions{
@@ -8902,6 +9135,17 @@ func TestServer_ListServiceTests(t *testing.T) {
 				Options: client.ServiceTestOptions{
 					"title": "testTitle",
 					"text":  "test talk text",
+				},
+			},
+			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/teams"},
+				Name: "teams",
+				Options: client.ServiceTestOptions{
+					"channel_url": "",
+					"alert_topic": "test kapacitor alert topic",
+					"alert_id":    "foo/bar/bat",
+					"message":     "test teams message",
+					"level":       "CRITICAL",
 				},
 			},
 			{
@@ -8985,6 +9229,16 @@ func TestServer_ListServiceTests_WithPattern(t *testing.T) {
 				Name: "serverset",
 				Options: client.ServiceTestOptions{
 					"id": "",
+				},
+			},
+			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/servicenow"},
+				Name: "servicenow",
+				Options: client.ServiceTestOptions{
+					"alert_id": "id",
+					"source":   "Kapacitor",
+					"level":    "CRITICAL",
+					"message":  "test servicenow alert",
 				},
 			},
 			{
@@ -9175,6 +9429,14 @@ func TestServer_DoServiceTest(t *testing.T) {
 			},
 		},
 		{
+			service: "servicenow",
+			options: client.ServiceTestOptions{},
+			exp: client.ServiceTestResult{
+				Success: false,
+				Message: "service is not enabled",
+			},
+		},
+		{
 			service: "slack",
 			options: client.ServiceTestOptions{},
 			exp: client.ServiceTestResult{
@@ -9208,6 +9470,14 @@ func TestServer_DoServiceTest(t *testing.T) {
 		},
 		{
 			service: "talk",
+			options: client.ServiceTestOptions{},
+			exp: client.ServiceTestResult{
+				Success: false,
+				Message: "service is not enabled",
+			},
+		},
+		{
+			service: "teams",
 			options: client.ServiceTestOptions{},
 			exp: client.ServiceTestResult{
 				Success: false,
@@ -9527,6 +9797,48 @@ func TestServer_AlertHandlers(t *testing.T) {
 		},
 		{
 			handler: client.TopicHandler{
+				Kind: "discord",
+				Options: map[string]interface{}{
+					"username":    "Kapacitor",
+					"avatar-url":  "https://influxdata.github.io/branding/img/downloads/influxdata-logo--symbol--pool-alpha.png",
+					"embed-title": "Kapacitor Alert",
+				},
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				ts := discordtest.NewServer()
+				ctxt := context.WithValue(nil, "server", ts)
+
+				c.Discord[0].Enabled = true
+				c.Discord[0].URL = ts.URL + "/test/discord/url"
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				ts := ctxt.Value("server").(*discordtest.Server)
+				ts.Close()
+				got := ts.Requests()
+				exp := []discordtest.Request{{
+					URL: "/test/discord/url",
+					PostData: discordtest.PostData{
+						Username:  "Kapacitor",
+						AvatarURL: "https://influxdata.github.io/branding/img/downloads/influxdata-logo--symbol--pool-alpha.png",
+						Embeds: []discordtest.Embed{
+							{
+								Color:       0xF95F53,
+								Title:       "Kapacitor Alert",
+								Timestamp:   "",
+								Description: "message",
+							},
+						},
+					},
+				}}
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected discord request:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
 				Kind: "exec",
 				Options: map[string]interface{}{
 					"prog": "/bin/alert-handler.sh",
@@ -9634,8 +9946,22 @@ func TestServer_AlertHandlers(t *testing.T) {
 					Offset:    0,
 					Key:       "id",
 					Message:   string(adJSON) + "\n",
+					Time:      time.Now().UTC(),
 				}}
-				if !cmp.Equal(exp, got) {
+				cmpopts := []cmp.Option{
+					cmp.Comparer(func(a, b time.Time) bool {
+						diff := a.Sub(b)
+						if diff < 0 {
+							diff = -diff
+						}
+						// It is ok as long as the timestamp is within
+						// 5 seconds of the current time. If we are that close,
+						// then it likely means the timestamp was correctly
+						// written.
+						return diff < 5*time.Second
+					}),
+				}
+				if !cmp.Equal(exp, got, cmpopts...) {
 					return fmt.Errorf("unexpected kafka messages -exp/+got:\n%s", cmp.Diff(exp, got))
 				}
 				return nil
@@ -9721,6 +10047,53 @@ func TestServer_AlertHandlers(t *testing.T) {
 				got := s.Clients[0].PublishData
 				exp := []mqtttest.PublishData{{
 					Topic:    "test",
+					QoS:      mqtt.AtLeastOnce,
+					Retained: true,
+					Message:  []byte("message"),
+				}}
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected mqtt publish data:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
+				Kind: "mqtt",
+				Options: map[string]interface{}{
+					"topic":    "test/{{.TaskName}}",
+					"qos":      "at-least-once",
+					"retained": true,
+				},
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				cc := new(mqtttest.ClientCreator)
+				ctxt := context.WithValue(nil, "clientCreator", cc)
+				cfg := &mqtt.Config{
+					Enabled: true,
+					Name:    "test",
+					URL:     "tcp://mqtt.example.com:1883",
+				}
+
+				cfg.SetNewClientF(cc.NewClient)
+
+				c.MQTT = mqtt.Configs{*cfg}
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				s := ctxt.Value("clientCreator").(*mqtttest.ClientCreator)
+				if got, exp := len(s.Clients), 1; got != exp {
+					return fmt.Errorf("unexpected number of clients created : exp %d got: %d", exp, got)
+				}
+				if got, exp := len(s.Configs), 1; got != exp {
+					return fmt.Errorf("unexpected number of configs received: exp %d got: %d", exp, got)
+				}
+				if got, exp := s.Configs[0].URL, "tcp://mqtt.example.com:1883"; exp != got {
+					return fmt.Errorf("unexpected config URL: exp %q got %q", exp, got)
+				}
+				got := s.Clients[0].PublishData
+				exp := []mqtttest.PublishData{{
+					Topic:    "test/testAlertHandlers",
 					QoS:      mqtt.AtLeastOnce,
 					Retained: true,
 					Message:  []byte("message"),
@@ -9970,7 +10343,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 				ctxt := context.WithValue(nil, "server", ts)
 				c.HTTPPost = httppost.Configs{{
 					Endpoint:      "test",
-					URL:           ts.URL,
+					URLTemplate:   ts.URL,
 					AlertTemplate: `{{.Message}}`,
 				}}
 				return ctxt, nil
@@ -10060,6 +10433,41 @@ func TestServer_AlertHandlers(t *testing.T) {
 				got := ts.Requests()
 				if !reflect.DeepEqual(exp, got) {
 					return fmt.Errorf("unexpected sensu request:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
+				Kind: "servicenow",
+				Options: map[string]interface{}{
+					"source": "Kapacitor",
+				},
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				ts := servicenowtest.NewServer()
+				ctxt := context.WithValue(nil, "server", ts)
+
+				c.ServiceNow.Enabled = true
+				c.ServiceNow.URL = ts.URL
+				c.ServiceNow.Source = "Kapacitor"
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				ts := ctxt.Value("server").(*servicenowtest.Server)
+				ts.Close()
+				exp := []servicenowtest.Request{{
+					URL: "/",
+					Alert: servicenow.Alert{
+						Source:      "Kapacitor",
+						Severity:    "1",
+						Description: "message",
+						MessageKey:  "id",
+					},
+				}}
+				got := ts.Requests()
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected servicenow request:\nexp\n%+v\ngot\n%+v\n", exp, got)
 				}
 				return nil
 			},
@@ -10281,6 +10689,38 @@ func TestServer_AlertHandlers(t *testing.T) {
 				got := ts.Data()
 				if !reflect.DeepEqual(exp, got) {
 					return fmt.Errorf("unexpected tcp request:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
+				Kind: "teams",
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				ts := teamstest.NewServer()
+				ctxt := context.WithValue(nil, "server", ts)
+
+				c.Teams.Enabled = true
+				c.Teams.ChannelURL = ts.URL
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				ts := ctxt.Value("server").(*teamstest.Server)
+				ts.Close()
+				got := ts.Requests()
+				exp := []teamstest.Request{{
+					URL: "/",
+					Card: teams.Card{
+						CardType: "MessageCard",
+						Context:  "http://schema.org/extensions",
+						Title:    "CRITICAL: [id]",
+						Text:     "message",
+						Summary:  "CRITICAL: [id] - message...",
+					},
+				}}
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected teams request:\nexp\n%+v\ngot\n%+v\n", exp, got)
 				}
 				return nil
 			},
